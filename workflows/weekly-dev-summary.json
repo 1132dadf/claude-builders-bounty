@@ -1,0 +1,191 @@
+{
+  "name": "Weekly GitHub Dev Summary (Claude + Discord)",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "weeks",
+              "triggerAtDay": [
+                5
+              ],
+              "triggerAtHour": 17
+            }
+          ]
+        }
+      },
+      "id": "weekly-trigger",
+      "name": "Every Friday at 5 PM",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        240,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.github.com/graphql",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "={{ 'Bearer ' + $env.GITHUB_TOKEN }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Accept",
+              "value": "application/vnd.github+json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "raw",
+        "rawContentType": "application/json",
+        "body": "={{ JSON.stringify({ query: \"query WeeklyActivity($owner: String!, $name: String!, $since: GitTimestamp!) { repository(owner: $owner, name: $name) { defaultBranchRef { target { ... on Commit { history(since: $since, first: 100) { nodes { oid messageHeadline committedDate } } } } } issues(states: CLOSED, first: 100, filterBy: {since: $since}) { nodes { title url closedAt } } pullRequests(states: MERGED, first: 100, filterBy: {since: $since}) { nodes { title url mergedAt } } } }\", variables: { owner: $env.GITHUB_OWNER, name: $env.GITHUB_REPO, since: $now.minus({ days: 7 }).toISO() } }) }}",
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "json"
+            }
+          }
+        }
+      },
+      "id": "github-activity",
+      "name": "Fetch GitHub Activity",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        480,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.anthropic.com/v1/messages",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "x-api-key",
+              "value": "={{$env.ANTHROPIC_API_KEY}}"
+            },
+            {
+              "name": "anthropic-version",
+              "value": "2023-06-01"
+            },
+            {
+              "name": "content-type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "raw",
+        "rawContentType": "application/json",
+        "body": "={{ JSON.stringify({ model: \"claude-sonnet-4-20250514\", max_tokens: 1800, system: \"You are a concise engineering team lead. Summarize only facts present in the supplied GitHub activity. Do not invent outcomes or metrics. Group the report into Highlights, Shipped, Fixed, Open Questions, and Next Week. Link to issues and pull requests where URLs are available.\", messages: [{ role: \"user\", content: \"Create the weekly developer summary for the last seven days in \" + ($env.SUMMARY_LANGUAGE || \"EN\") + \". If a category has no items, say None. Mention that the data is limited to the first 100 records per category. Activity JSON:\\n\" + JSON.stringify($('Fetch GitHub Activity').item.json.data.repository) }] }) }}",
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "json"
+            }
+          }
+        }
+      },
+      "id": "claude-summary",
+      "name": "Generate Summary with Claude",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        740,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{$env.DISCORD_WEBHOOK_URL}}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "raw",
+        "rawContentType": "application/json",
+        "body": "={{ JSON.stringify({ content: ($json.content && $json.content[0] && $json.content[0].text) ? $json.content[0].text.slice(0, 1900) : \"Weekly dev summary failed: Claude returned no text. Check the workflow execution.\" }) }}",
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "json"
+            }
+          }
+        }
+      },
+      "id": "discord-delivery",
+      "name": "Post to Discord",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1000,
+        300
+      ]
+    }
+  ],
+  "connections": {
+    "Every Friday at 5 PM": {
+      "main": [
+        [
+          {
+            "node": "Fetch GitHub Activity",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch GitHub Activity": {
+      "main": [
+        [
+          {
+            "node": "Generate Summary with Claude",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Generate Summary with Claude": {
+      "main": [
+        [
+          {
+            "node": "Post to Discord",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "timezone": "America/Toronto"
+  },
+  "versionId": "1",
+  "meta": {
+    "templateCredsSetupCompleted": false
+  },
+  "tags": []
+}
